@@ -117,6 +117,15 @@ def clean_name(s: str | None) -> str:
     return " ".join((s or "").translate(_OVERLAY).split())
 
 
+def surname_of(name: str) -> str:
+    """Последнее «словесное» слово имени после первого (только буквы); '' — если фамилии нет."""
+    for token in reversed(name.split()[1:]):
+        core = "".join(ch for ch in token if ch.isalpha())
+        if core:
+            return core
+    return ""
+
+
 def fmt_duration(seconds) -> str:
     try:
         s = int(seconds)
@@ -193,11 +202,28 @@ class Converter:
         return {uid: c.most_common(1)[0][0] for uid, c in counts.items()}
 
     def _shorten(self, names: dict[str, str]) -> dict[str, str]:
+        """Имя без фамилии; у тёзок — плюс кратчайший префикс фамилии, различающий их («Анна К.»)."""
         if not self.o.short_names:
             return names
         first = {uid: n.split()[0] for uid, n in names.items() if n}
-        freq = Counter(first.values())
-        return {uid: first[uid] if freq[first[uid]] == 1 else n for uid, n in names.items() if uid in first}
+        groups: dict[str, list[str]] = {}
+        for uid, f in first.items():
+            groups.setdefault(f.casefold(), []).append(uid)
+        short: dict[str, str] = {}
+        for uids in groups.values():
+            if len(uids) == 1:
+                short[uids[0]] = first[uids[0]]
+                continue
+            surnames = {uid: surname_of(names[uid]) for uid in uids}
+            for k in range(1, max(map(len, surnames.values())) + 1):
+                labels = {uid: f"{first[uid]} {surnames[uid][:k]}{'.' if len(surnames[uid]) > k else ''}"
+                          if surnames[uid] else first[uid] for uid in uids}
+                if len({v.rstrip(".").casefold() for v in labels.values()}) == len(uids):  # точка — не различие
+                    short.update(labels)
+                    break
+            else:  # префиксом не развести (одинаковые фамилии) — оставляем полные имена
+                short.update({uid: names[uid] for uid in uids})
+        return short
 
     def name_of(self, uid: str | None, fallback: str | None) -> str:
         if uid and uid in self.names:
@@ -410,10 +436,17 @@ class Converter:
         title = clean_name(self.chat.get("name")) or "без названия"
         kind = CHAT_KINDS.get(self.chat.get("type"), "чат")
         people = Counter()
+        keys: dict[str, str] = {}
         for b in blocks:
             if not b.service:
                 people[b.sender] += len(b.lines)
-        listed = [n for n, _ in people.most_common(30)]
+                keys.setdefault(b.sender, b.sender_key)
+
+        def legend(label: str) -> str:  # при сокращённых именах — «Полное имя (как в тексте)»
+            full = self._full_names.get(keys[label], label)
+            return label if full == label else f"{full} ({label})"
+
+        listed = [legend(n) for n, _ in people.most_common(30)]
         extra = f" и ещё {len(people) - 30}" if len(people) > 30 else ""
         first = f"Чат «{title}» — {kind}"
         if part:
