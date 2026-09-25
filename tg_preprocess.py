@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import sys
@@ -169,9 +170,17 @@ class Converter:
         self.o = opts
         self.msgs = [m for m in chat.get("messages", []) if isinstance(m, dict)]
         self.by_id = {m["id"]: m for m in self.msgs if "id" in m}
-        self.names = self._collect_names()
+        self._full_names = self._collect_names()
+        self.names = self._shorten(self._full_names)
         senders = {m.get("from_id") or m.get("from") for m in self.msgs if m.get("type") != "service"}
         self.many = len(senders - {None}) > 2
+
+    def with_options(self, opts: Options) -> Converter:
+        """Копия с другими опциями; индексы по чату (дорогие на больших выгрузках) переиспользуются."""
+        clone = copy.copy(self)
+        clone.o = opts
+        clone.names = clone._shorten(self._full_names)
+        return clone
 
     # --- имена
 
@@ -181,12 +190,14 @@ class Converter:
             for id_key, name_key in (("from_id", "from"), ("actor_id", "actor")):
                 if m.get(id_key) and m.get(name_key):
                     counts.setdefault(m[id_key], Counter())[clean_name(m[name_key])] += 1
-        names = {uid: c.most_common(1)[0][0] for uid, c in counts.items()}
-        if self.o.short_names:
-            first = {uid: n.split()[0] for uid, n in names.items() if n}
-            freq = Counter(first.values())
-            names = {uid: first[uid] if freq[first[uid]] == 1 else n for uid, n in names.items() if uid in first}
-        return names
+        return {uid: c.most_common(1)[0][0] for uid, c in counts.items()}
+
+    def _shorten(self, names: dict[str, str]) -> dict[str, str]:
+        if not self.o.short_names:
+            return names
+        first = {uid: n.split()[0] for uid, n in names.items() if n}
+        freq = Counter(first.values())
+        return {uid: first[uid] if freq[first[uid]] == 1 else n for uid, n in names.items() if uid in first}
 
     def name_of(self, uid: str | None, fallback: str | None) -> str:
         if uid and uid in self.names:
@@ -298,7 +309,8 @@ class Converter:
     # --- ответы и реакции
 
     def quote_text(self, target: dict) -> str:
-        flat = self.body(target, media=True, short_poll=True)
+        # только текст: пометки о пересылке/файле съедали бы лимит; они нужны, лишь когда текста нет
+        flat = tidy(self.flatten(target.get("text"))) or self.body(target, media=True, short_poll=True)
         return truncate_words(flat, self.o.quote_min, self.o.quote_max)
 
     def reply_prefix(self, m: dict, prev_id, sender_key: str) -> str:
@@ -336,10 +348,11 @@ class Converter:
     def in_range(self, dt: datetime) -> bool:
         return (not self.o.since or dt.date() >= self.o.since) and (not self.o.until or dt.date() <= self.o.until)
 
-    def items(self) -> list[Item]:
+    def items(self, limit: int | None = None) -> list[Item]:
         items: list[Item] = []
         prev_id = None
         prev_reply: tuple | None = None
+        consumed = 0
         for m in self.msgs:
             try:
                 dt = datetime.fromisoformat(m["date"]).replace(second=0, microsecond=0)
@@ -347,6 +360,9 @@ class Converter:
                 continue
             if not self.in_range(dt):
                 continue
+            if limit is not None and consumed >= limit:
+                break
+            consumed += 1
             key, sender = self.sender_of(m)
             if m.get("type") == "service":
                 if m.get("action") == "phone_call":
@@ -460,8 +476,9 @@ class Converter:
             lines.append(b.render())
         return "\n".join(lines) + "\n"
 
-    def convert(self) -> Result:
-        items = self.items()
+    def convert(self, limit: int | None = None) -> Result:
+        """limit — обработать только первые N сообщений (после фильтра по датам); для быстрого предпросмотра."""
+        items = self.items(limit)
         blocks = self.blocks(items)
         if not blocks:
             return Result([self.render_part([], None, 0, None)], len(self.msgs), 0, 0)
