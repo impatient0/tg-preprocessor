@@ -58,7 +58,7 @@ class ExportError(Exception):
 @dataclass
 class Options:
     reactions: bool = False
-    links: str = "domain"  # domain | keep | drop
+    links: str = "domain"  # domain | keep | hide
     keep_service: bool = False
     media: bool = True
     quote_min: int = 30
@@ -164,11 +164,11 @@ def format_link(text: str, href: str | None, mode: str) -> str:
     plain = not href or href == text or re.match(r"(https?://|www\.)", text) is not None
     if mode == "keep":
         return text if plain else f"{text} ({href})"
-    if mode == "drop":
-        return "" if plain else text
-    dom = domain_of(href or text)
-    label = f"[ссылка: {dom}]" if dom else "[ссылка]"
-    return label if plain else f"{text} [{dom}]" if dom else text
+    # domain — заглушка с доменом, hide — просто заглушка; место ссылки остаётся заметным в обоих режимах
+    dom = domain_of(href or text) if mode == "domain" else ""
+    if plain:
+        return f"[ссылка: {dom}]" if dom else "[ссылка]"
+    return f"{text} [{dom or 'ссылка'}]"
 
 
 # ---------------------------------------------------------------- ядро
@@ -606,8 +606,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--chat", help="для экспорта нескольких чатов: номер, id или часть названия")
     p.add_argument("--list-chats", action="store_true", help="показать чаты из файла и выйти")
     p.add_argument("--reactions", action="store_true", help="добавлять реакции")
-    p.add_argument("--links", choices=("domain", "keep", "drop"), default="domain",
-                   help="ссылки: домен (по умолчанию) / как есть / убрать")
+    p.add_argument("--links", choices=("domain", "keep", "hide"), default="domain",
+                   help="ссылки: [ссылка: домен] (по умолчанию) / как есть / просто [ссылка]")
     p.add_argument("--keep-service", action="store_true", help="оставлять служебные сообщения")
     p.add_argument("--no-media", dest="media", action="store_false", help="не выводить пометки о медиа")
     p.add_argument("--merge-window", type=int, default=5, metavar="МИН",

@@ -19,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import tg_preprocess as core
 
-LINK_MODES = {"Домен": "domain", "Как есть": "keep", "Убрать": "drop"}
+LINK_MODES = {"Домен": "domain", "Как есть": "keep", "Скрыть": "hide"}
 PREVIEW_MESSAGES = 500  # сколько первых сообщений реального чата идёт в предпросмотр
 PREVIEW_LIMIT = 300_000  # предохранитель по числу символов в виджете
 PART_SEP = "\n" + "─" * 60 + "\n"  # граница частей при --max-tokens
