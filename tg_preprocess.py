@@ -532,6 +532,22 @@ def part_paths(base: Path, n: int) -> list[Path]:
     return [base.with_name(f"{base.stem}_{i:0{width}d}{base.suffix}") for i in range(1, n + 1)]
 
 
+def write_parts(base: Path, parts: list[str]) -> list[Path]:
+    paths = part_paths(base, len(parts))
+    for path, text in zip(paths, parts):
+        path.write_text(text, encoding="utf-8", newline="\n")
+    return paths
+
+
+def stats_lines(result: Result, size_in: int) -> list[str]:
+    size_out = sum(len(t) for t in result.parts)
+    tokens = sum(estimate_tokens(t) for t in result.parts)
+    return [
+        f"Сообщений в чате: {result.messages_in}, в результате: {result.messages_out} (блоков: {result.blocks})",
+        f"Размер: {size_in:,} байт JSON → {size_out:,} симв. (≈{tokens:,} токенов)".replace(",", " "),
+    ]
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Сжимает экспорт чата Telegram (result.json) в компактный текст для LLM.")
@@ -587,17 +603,10 @@ def main(argv: list[str] | None = None) -> int:
         paths: list[Path] = []
     else:
         base = Path(args.output) if args.output else default_output(args.input, chat)
-        paths = part_paths(base, len(result.parts))
-        for path, text in zip(paths, result.parts):
-            path.write_text(text, encoding="utf-8", newline="\n")
+        paths = write_parts(base, result.parts)
 
-    size_in = args.input.stat().st_size
-    size_out = sum(len(t) for t in result.parts)
-    tokens = sum(estimate_tokens(t) for t in result.parts)
-    print(f"Сообщений в чате: {result.messages_in}, в результате: {result.messages_out} (блоков: {result.blocks})",
-          file=sys.stderr)
-    print(f"Размер: {size_in:,} байт JSON → {size_out:,} симв. (≈{tokens:,} токенов)".replace(",", " "),
-          file=sys.stderr)
+    for line in stats_lines(result, args.input.stat().st_size):
+        print(line, file=sys.stderr)
     for path in paths:
         print(f"Записано: {path}", file=sys.stderr)
     return 0
